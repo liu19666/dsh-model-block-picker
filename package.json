@@ -1,0 +1,28 @@
+{
+  "name": "dsh-model-block-picker",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness 模块化模型选择器：根据模型来源（Provider 如 CodeBuddy、Qoder、DeepSeek 等）分块展示，支持分块下钻、全局搜索与推理强度调节。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "model-selector",
+    "cordis"
+  ],
+  "license": "MIT"
+}
