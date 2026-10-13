@@ -10,6 +10,27 @@ model-availability handling are **fully preserved**.
 
 ---
 
+## Preview
+
+Clicking the model seat at the right of the composer no longer opens a long flat list — it opens a
+**card grid grouped by provider**:
+
+![Grouped panel, search and reasoning effort](docs/screenshot-panel.png)
+
+- **① Global search** — type `v3` / `sonnet` / `r1` at the top to fuzzy-match across all 17 providers;
+  Enter selects the first hit.
+- **② Grouped by provider** — one card per channel, showing "N models" and an "Enter →" affordance.
+- **③ "Current" badge** — the provider in use gets a highlighted outline and a corner badge.
+- **④ Reasoning Effort** — when the selected model supports reasoning, the effort selector is kept at
+  the bottom of the popover.
+
+The trigger itself matches the neighbouring screenshot / microphone icons (dark surface + the theme's
+off-white stroke and text):
+
+![Composer model seat and neighbouring icons](docs/screenshot-composer.png)
+
+---
+
 ## Features
 
 - **Grouped by provider**: DeepSeek Account, DeepSeek API, and third-party channels (CodeBuddy / Qoder /

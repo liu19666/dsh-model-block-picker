@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reasoning Effort selector preserved when the selected model supports it.
 - Host + client lifecycle diagnostics (`/plugins/dsh-model-block-picker/diag`).
 - MIT license, bilingual README.
+- Annotated screenshots in both READMEs (`docs/`): the grouped panel with numbered callouts for search,
+  grouping, the "current" badge and Reasoning Effort, plus the composer row comparing the trigger with
+  the neighbouring native icons.
 
 ### Fixed
 
