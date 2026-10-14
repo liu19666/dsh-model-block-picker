@@ -1,0 +1,4 @@
+chore: ignore packed tarballs
+
+npm pack drops dsh-model-block-picker-<version>.tgz in the repo root;
+ignore it so a local pack never gets committed by accident.
