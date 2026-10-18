@@ -266,7 +266,7 @@ jobs:
             200|201)
               echo "::warning::The OIDC exchange succeeded, so the trusted publisher is correctly configured; the failure is inside npm publish itself. Check the log above this step." ;;
             404)
-              echo "::error::npm does not recognise this repository as a trusted publisher for ${PKG}. Add it at https://www.npmjs.com/package/${PKG}/access with organization 'liu19666', repository 'dsh-model-block-picker', workflow 'publish.yml', and tick BOTH 'npm publish' and 'npm dist-tag' under Allowed actions." ;;
+              echo "::error::npm does not recognise this repository as a trusted publisher for ${PKG}. Add it at https://www.npmjs.com/package/${PKG}/access with Organization or user 'liu19666', Repository 'dsh-model-block-picker', Workflow filename 'publish.yml', and tick 'npm publish' under Allowed actions. 'npm dist-tag' is a SEPARATE permission and this workflow never calls npm dist-tag — publishing with --tag IS the publish permission — so leave it unticked." ;;
             *)
               echo "::error::The OIDC exchange was rejected with HTTP ${CODE}; the body above is the registry's explanation." ;;
           esac
