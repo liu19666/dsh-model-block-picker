@@ -1,0 +1,336 @@
+name: Release
+
+# One push to main is the whole release.
+#
+#   edit the code → bump "version" in package.json → add a `## [x.y.z]` section
+#   to CHANGELOG.md → push. Nothing else.
+#
+# That push publishes to npm, then tags and creates the GitHub Release. The
+# workflow is written around four properties, in the order they matter:
+#
+#  1. IDEMPOTENT. Every job runs only when its artifact does not already
+#     exist, so re-running a failed job, or pushing again without a version
+#     bump, publishes nothing and creates no duplicate tag. A release pipeline
+#     that can half-succeed is worse than one that cannot run twice: the
+#     failure mode is a version you cannot retry and a tag you cannot move.
+#
+#  2. NO SECRET. npm authentication is GitHub OIDC trusted publishing: npm
+#     verifies a short-lived token minted for this workflow file, in this
+#     repository, on this branch. There is no NPM_TOKEN to leak, rotate or
+#     forget, and the credential cannot be replayed from anyone's machine.
+#     Requires ONE manual setup on npmjs.com — see README "发布流程".
+#
+#  3. PREFLIGHT BEFORE PUBLISH. npm is append-only: a version number, once
+#     published, can never be reused or overwritten. So every check that can
+#     fail — the version format, the npm version not already claimed — runs
+#     first, in one job, and the publish job never starts if any of them fails.
+#
+#  4. NO CREDENTIALS IN .npmrc. `actions/setup-node` with `registry-url` writes
+#     `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into .npmrc. With
+#     trusted publishing NODE_AUTH_TOKEN is deliberately unset, so that
+#     placeholder expands to the empty string — and npm then believes
+#     credentials ARE configured, skips the OIDC exchange entirely, and fails
+#     with ENEEDAUTH/E404. That is npm/documentation#1960. This workflow
+#     therefore does NOT pass `registry-url` (npm already defaults to
+#     registry.npmjs.org) and asserts the resulting .npmrc is credential-free
+#     before publishing, so the failure is explicit instead of cryptic.
+
+on:
+  push:
+    branches: [main]
+    # A push that only touches screenshots, the licence or ignore rules cannot
+    # change what ships, so it must not burn a release run. CHANGELOG.md is
+    # deliberately NOT ignored: the release body comes from it. `.github/**` is
+    # not ignored either — a workflow-only push then re-runs the pipeline, which
+    # is a free no-op (version already on npm, tag already cut) and the only way
+    # to validate a workflow edit before relying on it.
+    paths-ignore:
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'screenshots.json'
+  # Manual re-run, e.g. after configuring the trusted publisher on a
+  # repository whose release predates that setup.
+  workflow_dispatch:
+
+# Least privilege, scoped per job: read by default, and each job widens it only
+# for what it actually does. A single workflow-level block would hand
+# `id-token: write` to every step, including `npm pack` in preflight.
+permissions:
+  contents: read
+
+# One release at a time. Without this, two quick pushes race on the tag and on
+# the npm publish. cancel-in-progress is false on purpose: cancelling midway is
+# how a version enters npm with no tag pointing at it.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------------
+  # Preflight: decide whether this commit is a release, and refuse loudly when
+  # the release would be broken. Everything that can fail without side effects
+  # belongs here.
+  # ------------------------------------------------------------------------
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # No write scopes: preflight only reads the repo and the registry.
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      dist_tag: ${{ steps.check.outputs.dist_tag }}
+      release: ${{ steps.check.outputs.release }}
+      published: ${{ steps.check.outputs.published }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tag-existence check needs tags, and the default shallow clone
+          # has none.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          # Never use a dependency cache in a release build: a poisoned cache
+          # can feed attacker-controlled code into the job that holds the OIDC
+          # credential. There is no lockfile here anyway.
+          package-manager-cache: false
+
+      - id: check
+        name: Resolve version and decide what is already done
+        run: |
+          set -euo pipefail
+
+          VERSION="$(node -p "require('./package.json').version")"
+          PKG="$(node -p "require('./package.json').name")"
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          # A malformed version would create a malformed tag AND an npm release
+          # nobody can install. Fail here, before anything is minted.
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::package.json version '$VERSION' is not semver (x.y.z). Refusing to release."
+            exit 1
+          fi
+
+          # `npm publish` tags EVERY version as `latest` unless told otherwise —
+          # including prereleases. Without this, 1.2.0-beta.1 would silently
+          # become what `npm install dsh-model-block-picker` hands a stranger.
+          # A prerelease publishes under its own identifier (beta, rc, ...).
+          if [ "${VERSION#*-}" != "$VERSION" ]; then
+            DIST_TAG="${VERSION#*-}"
+            DIST_TAG="${DIST_TAG%%.*}"
+            DIST_TAG="${DIST_TAG%%[0-9]*}"
+            [ -n "$DIST_TAG" ] || DIST_TAG=next
+            echo "::notice::${VERSION} is a prerelease; publishing under dist-tag '${DIST_TAG}'."
+          else
+            DIST_TAG=latest
+          fi
+          echo "dist_tag=${DIST_TAG}" >> "$GITHUB_OUTPUT"
+
+          # A version already on npm can never be republished. Checking it here
+          # turns a confusing 403 from `npm publish` into a clear message:
+          # someone bumped the version, published by hand, and pushed the bump.
+          if npm view "${PKG}@${VERSION}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PKG}@${VERSION} is already on npm; the publish job will be skipped."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Tag presence decides the GitHub Release independently of npm: a
+          # hand-published version still wants its tag and notes.
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag ${TAG} already exists; the release job will be skipped."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate the package manifest
+        run: |
+          set -euo pipefail
+          # `npm pack --dry-run` runs the same manifest validation `npm publish`
+          # does (files, main, engines) without touching the registry. Worth one
+          # step: an invalid `files` entry only shows up at publish time, after
+          # the version is already claimed as a tag.
+          npm pack --dry-run > pack.log 2>&1 || { tail -30 pack.log; exit 1; }
+          tail -12 pack.log
+
+  # ------------------------------------------------------------------------
+  # Publish to npm with OIDC. Runs only when the version is not yet on npm.
+  # ------------------------------------------------------------------------
+  publish:
+    name: Publish to npm
+    needs: preflight
+    if: needs.preflight.result == 'success' && needs.preflight.outputs.published == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # `id-token: write` mints the OIDC credential npm verifies in place of a
+    # token. Nothing here needs to write to the repository.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # NOTE: no `registry-url`. It would inject an empty `_authToken` into
+      # .npmrc and defeat the OIDC exchange (npm/documentation#1960).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Ensure npm supports trusted publishing
+        run: |
+          set -euo pipefail
+          # Trusted publishing needs npm >= 11.5.1. Node 24 ships npm 11, but the
+          # exact patch is not something to bet a release on: assert, and
+          # upgrade only when the assertion fails.
+          HAVE="$(npm --version)"
+          echo "npm ${HAVE}"
+          if [ "$(printf '%s\n%s\n' '11.5.1' "$HAVE" | sort -V | head -1)" != '11.5.1' ]; then
+            echo "::notice::npm ${HAVE} predates trusted publishing; upgrading"
+            npm install -g npm@^11.5.1
+            npm --version
+          fi
+
+      - name: Assert npm has no static credentials
+        run: |
+          set -euo pipefail
+          # The failure this guards against is silent: with an `_authToken`
+          # line present npm never attempts OIDC, and the resulting ENEEDAUTH
+          # points at the trusted-publisher settings rather than at .npmrc.
+          # Fail here, naming the actual cause.
+          npmrc="${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
+          if [ -f "$npmrc" ] && grep -q '_authToken' "$npmrc"; then
+            echo "::error::${npmrc} contains an _authToken entry; npm would use it instead of the OIDC exchange."
+            grep -n '_authToken' "$npmrc"
+            exit 1
+          fi
+          echo "No static credentials in ${npmrc}; the OIDC exchange is free to run."
+
+      - name: Publish
+        env:
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+          # Provenance attests that these bytes were built from this commit by
+          # this workflow — the reason a stranger can trust the package, and
+          # something npm's own Sigstore-backed audit verifies. Trusted
+          # publishing enables this automatically for public repos; stating it
+          # explicitly means a future change to that default cannot silently
+          # drop the attestation.
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          set -euo pipefail
+          # No NODE_AUTH_TOKEN: the OIDC credential is minted by the runner and
+          # exchanged by npm. Passing a token here would defeat the point.
+          npm publish --tag "$DIST_TAG"
+
+  # ------------------------------------------------------------------------
+  # Tag and Release, after the code is actually installable. Ordering matters:
+  # a tag pointing at a commit whose npm publish failed advertises a download
+  # that 404s.
+  # ------------------------------------------------------------------------
+  release:
+    name: Tag and GitHub Release
+    needs: [preflight, publish]
+    # Publish is skipped when the version is already on npm; this job must run
+    # then too, which is what `always()` plus an explicit guard buys. A failed
+    # or cancelled publish must NOT reach here.
+    if: |
+      always()
+      && needs.preflight.result == 'success'
+      && needs.preflight.outputs.release == 'true'
+      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `contents: write` creates the tag and the Release; no OIDC here.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The tag push is only meaningful against a full clone, and the
+          # Release body is assembled from CHANGELOG.md in the working tree.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Create tag
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+      - name: Assemble release body
+        env:
+          TAG: ${{ needs.preflight.outputs.tag }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          # The script exits 0 with empty output when the version has no
+          # CHANGELOG section, so a forgotten entry degrades to GitHub's
+          # generated notes instead of failing the release.
+          node scripts/release-notes.mjs . > curated.md || true
+          if [ -s curated.md ]; then
+            cp curated.md body.md
+          else
+            echo "::warning::CHANGELOG.md has no [${VERSION}] section; using generated notes."
+            : > body.md
+          fi
+          {
+            printf '\n---\n\n'
+            printf '**npm:** https://www.npmjs.com/package/dsh-model-block-picker/v/%s\n' "$VERSION"
+            if [ "$DIST_TAG" != latest ]; then
+              printf '\n**Install:** `npm install dsh-model-block-picker@%s` — this is a prerelease and is *not* the default `latest` tag.\n' "$DIST_TAG"
+            fi
+            printf '\n**Full changelog:** https://github.com/%s/blob/%s/CHANGELOG.md\n' "$GITHUB_REPOSITORY" "$TAG"
+          } >> body.md
+          wc -c < body.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          # A prerelease must not be advertised as the repository's "Latest":
+          # that is what a visitor installs.
+          flag=--latest
+          [ "$DIST_TAG" = latest ] || flag=--prerelease
+          # --latest marks this as the release the repository page advertises.
+          # The npm page and the changelog are both linked so a reader arriving
+          # from either side can find the other.
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file body.md \
+            "$flag"
+
+      - name: Summarise
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+          PUBLISHED: ${{ needs.preflight.outputs.published }}
+        run: |
+          {
+            echo "### Released ${VERSION}"
+            echo
+            echo "- npm publish: $([ "$PUBLISHED" = 'false' ] && echo "published now under \`${DIST_TAG}\`" || echo 'already on npm, skipped')"
+            echo "- tag: ${TAG}"
+            echo "- release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
