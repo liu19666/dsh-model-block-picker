@@ -15,17 +15,29 @@ model-availability handling are **fully preserved**.
 Clicking the model seat at the right of the composer no longer opens a long flat list — it opens a
 **card grid grouped by provider**:
 
-![Grouped panel, search and reasoning effort](docs/screenshot-panel.png)
+![Grouped panel with search, reasoning slider, speed and output verbosity](docs/screenshot-panel.png)
 
-- **① Global search** — type `v3` / `sonnet` / `r1` at the top to fuzzy-match across all 17 providers;
+- **① Global search** — type `v3` / `sonnet` / `r1` at the top to fuzzy-match across all providers;
   Enter selects the first hit.
-- **② Grouped by provider** — one card per channel, showing "N models" and an "Enter →" affordance.
+- **② Grouped by provider** — one card per channel, showing "N models" and an "Enter →" affordance;
+  cards can be dragged to reorder.
 - **③ "Current" badge** — the provider in use gets a highlighted outline and a corner badge.
-- **④ Reasoning Effort** — when the selected model supports reasoning, the effort selector is kept at
-  the bottom of the popover.
+- **④ Reasoning effort colour slider** — a draggable Low → Max gradient slider; clicking a tick label
+  jumps straight to that level.
+- **⑤ Speed / output verbosity** — shown only when the selected model supports them; the whole row is
+  hidden otherwise.
 
-The trigger itself matches the neighbouring screenshot / microphone icons (dark surface + the theme's
-off-white stroke and text):
+Dark mode uses the same theme tokens with `--dsw-alias-link` (`#7aaaff`) as the accent, so no more
+white-on-white text:
+
+![Grouped panel in dark mode](docs/screenshot-dark.png)
+
+The ⚙ button left of the search box opens **display settings**, where whole providers and individual
+models can be toggled:
+
+![Display settings panel](docs/screenshot-settings.png)
+
+The trigger itself matches the neighbouring screenshot / microphone icons (theme stroke and text):
 
 ![Composer model seat and neighbouring icons](docs/screenshot-composer.png)
 
@@ -39,11 +51,21 @@ off-white stroke and text):
   or `Esc` goes back.
 - **Global search**: type `v3` / `sonnet` / `r1` to fuzzy-match across *all* providers, Enter selects the
   first hit; clearing the box returns to the grouped view.
-- **Reasoning Effort kept**: when the selected model supports reasoning, an effort selector (default /
-  low / medium / high …) appears at the bottom of the popover.
-- **Theme-aware**: light and dark both use real DSH theme tokens. In dark mode the trigger is a
-  black surface with the theme's off-white stroke/text, matching the microphone and screenshot icons
-  in the same toolbar row.
+- **Reasoning Effort as a colour slider**: when the selected model supports reasoning, a draggable
+  gradient slider (Low → Max stops, glowing thumb, clickable tick labels) appears at the bottom of the
+  popover in the style of the OpenAI Codex settings sliders, together with a "restore provider default"
+  action.
+- **Adaptive speed / output-verbosity rows**: providers that expose those preferences (for example
+  `dsh-codex-subscription` / `openai-codex`) get `Speed` (standard / fast / ultrafast) and
+  `Output verbosity` (default / concise / balanced / detailed) segmented controls. Each row is shown
+  **only when the currently selected model actually supports it**, so no dead switches appear.
+- **Visibility settings panel**: the ⚙ button left of the search box opens a panel where whole providers
+  and individual models can be toggled off; expand a provider to manage its models one by one.
+- **Drag-to-reorder providers**: drag a card to move that provider earlier or later; the order is saved.
+- **Preference persistence**: order, hidden providers and hidden models live in `localStorage`
+  (`dsh-model-block-picker.prefs.v1`) and stale ids are pruned automatically.
+- **Theme-aware**: light and dark both use real DSH theme tokens. Accent colour is `--dsw-alias-link`
+  (`#7aaaff` in dark) — *not* `--dsw-alias-brand-primary`, which inverts to near-white in dark mode.
 
 ## Install
 
@@ -141,8 +163,13 @@ dsh-model-block-picker/
 - It replaces the composer model seat only; the `/model` command popover keeps its stock look (they
   share one directory, so selections stay in sync).
 - Addressed subagent sessions expose no model selection (same as stock behavior).
-- Group order: DeepSeek Account → DeepSeek official → the rest sorted by name. Change the sorting logic
-  in `client.js` if you need a custom order.
+- Group order: defaults to DeepSeek Account → DeepSeek official → the rest by name; **drag the cards in
+  the panel** to set your own order (persisted in `localStorage`).
+- Speed / output verbosity depend on what the provider exposes: only providers implementing those
+  preferences (currently `dsh-codex-subscription`'s `openai-codex`) are recognised; other providers
+  simply do not show those rows.
+- Preferences are stored in browser `localStorage`, so they are **per browser profile** and do not sync
+  across machines.
 
 ## License
 

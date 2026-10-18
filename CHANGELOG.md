@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-10-18
+
+### Added
+
+- **Per-model reasoning slider**: the reasoning effort drop-down was replaced by a draggable
+  gradient range slider in the style of the OpenAI Codex settings sliders — segmented colour stops,
+  a glowing thumb, clickable tick labels, the current level echoed on the right, and a
+  "restore provider default" button.
+- **Speed and output-verbosity controls**: for providers that expose these preferences
+  (`dsh-codex-subscription` / `openai-codex`), the popover now also renders `速度` (standard / fast /
+  ultrafast) and `输出详略` (default / concise / balanced / detailed) segmented controls, read and
+  written through the provider's own `codex-subscription/preferences/*` RPC endpoints. Both rows
+  appear only when the currently selected model actually supports them.
+- **Visibility settings panel**: a ⚙ button to the left of the search box opens a panel where whole
+  providers and individual models can be toggled on/off, with an expandable per-provider model list,
+  a hidden-count indicator and a one-click "restore all" action.
+- **Drag-to-reorder providers**: provider cards are draggable; the dragged card fades, the drop
+  target gets an accent outline, and the new order is persisted.
+- **Preference persistence**: provider order, hidden providers and hidden models are stored in
+  `localStorage` under `dsh-model-block-picker.prefs.v1`, and stale provider/model ids are pruned
+  automatically.
+
+### Fixed
+
+- **Dark-mode "current selection" was unreadable**: the accent colour used `--dsw-alias-brand-primary`,
+  which inverts to near-white (`#f9fafb`) in dark mode, producing white-on-white text, badges and
+  outlines. All accent uses (selected model name, active card, "current" badge, focus rings) now use
+  `--dsw-alias-link` (`#7aaaff` in dark), and badges keep white glyphs on a saturated fill.
+- **Effort slider ticks were misaligned**: tick labels are now absolutely positioned at each thumb
+  stop (`left: calc(ratio% + thumbPad)`) instead of being spread by `space-between`, so the active
+  label sits exactly under the thumb.
+- **Accessibility**: model-level toggles in the settings panel were anonymous buttons; they now
+  carry `aria-label` / `role="switch"` / `aria-checked`.
+
 ## [1.0.0] - 2026-10-14
 
 ### Added

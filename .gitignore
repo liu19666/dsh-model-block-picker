@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 *.tgz
 .cmsg*.txt
+
+# DSH ops update locks
+.dsh-ops-update-*.lock
