@@ -158,7 +158,22 @@ git push                     # ← 只有这一步会触发发布
 
 ### 只有第一次需要手动配置
 
-npm 那边要认这个仓库，得先建一次「信任关系」（之后永久有效）：
+npm 那边要认这个仓库，得先建一次「信任关系」（之后永久有效）。
+
+**前置条件：npm 账号必须已开启 2FA。** 未开启时 registry 直接拒绝可信发布器的读写（`403 Please enable 2fa for your account`），而且这个报错只在你尝试配置时出现，不会提前提示。2FA 用安全密钥（passkey / Windows Hello）或验证器 App 都行，等级选 `auth-and-writes`。
+
+**方式一：命令行**
+
+```bash
+npm trust github dsh-model-block-picker \
+  --file publish.yml \
+  --repo liu19666/dsh-model-block-picker \
+  --allow-publish
+```
+
+这是账号级写操作，会要求一次性口令：终端会打印一个 `https://www.npmjs.com/auth/cli/<id>` 链接（npm 11.19 起把链接里的 id 打码成了 `***`，看不到就改用下面的网页方式），在浏览器里用你的 2FA 完成验证即可。
+
+**方式二：网页**
 
 1. 打开 <https://www.npmjs.com/package/dsh-model-block-picker/settings>，找到 **Trusted Publisher**。
 2. 选 **GitHub Actions**，填三项（区分大小写，仓库和文件名都不能带路径）：

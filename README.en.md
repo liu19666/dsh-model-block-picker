@@ -191,7 +191,22 @@ git push                     # ← this is the only step that triggers a release
 
 ### The one manual step, done once
 
-npm has to trust this repository first; the trust is permanent afterwards:
+npm has to trust this repository first; the trust is permanent afterwards.
+
+**Prerequisite: the npm account must already have 2FA enabled.** Without it the registry refuses to read or write trusted publishers outright (`403 Please enable 2fa for your account`), and that error only shows up when you try to configure it — nothing warns you beforehand. Either a security key (passkey / Windows Hello) or an authenticator app works; the level must be `auth-and-writes`.
+
+**Option 1: the CLI**
+
+```bash
+npm trust github dsh-model-block-picker \
+  --file publish.yml \
+  --repo liu19666/dsh-model-block-picker \
+  --allow-publish
+```
+
+This is an account-level write, so it asks for a one-time password: the terminal prints a `https://www.npmjs.com/auth/cli/<id>` link (npm 11.19 masks the id as `***`; if you cannot see it, use the web option below) which you complete in a browser with your 2FA.
+
+**Option 2: the web UI**
 
 1. Open <https://www.npmjs.com/package/dsh-model-block-picker/settings> and find **Trusted Publisher**.
 2. Pick **GitHub Actions** and fill in three fields (case-sensitive, no path in the workflow name):
