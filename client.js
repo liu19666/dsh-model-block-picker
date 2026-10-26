@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
 
     const PREFS_KEY = "dsh-model-block-picker.prefs.v1";
 
-    const EMPTY_PREFS = { order: [], hiddenProviders: [], hiddenModels: {} };
+    const EMPTY_PREFS = { order: [], hiddenProviders: [], hiddenModels: {}, modelOrder: {} };
 
     function readPrefs() {
       try {
@@ -45,7 +45,16 @@ window.__ModuleLoader__.load({
             }
           }
         }
-        return { order, hiddenProviders, hiddenModels };
+        const modelOrder = {};
+        if (parsed.modelOrder && typeof parsed.modelOrder === "object") {
+          for (const [key, value] of Object.entries(parsed.modelOrder)) {
+            if (Array.isArray(value)) {
+              const ids = value.filter((v) => typeof v === "string");
+              if (ids.length > 0) modelOrder[key] = ids;
+            }
+          }
+        }
+        return { order, hiddenProviders, hiddenModels, modelOrder };
       } catch (e) {
         return { ...EMPTY_PREFS };
       }
@@ -64,6 +73,27 @@ window.__ModuleLoader__.load({
 
     const CODEX_PROVIDER = "openai-codex";
     const CODEX_ENDPOINT = "codex-subscription/preferences/";
+    const ALIAS_ENDPOINT = "/plugins/dsh-model-block-picker/aliases";
+    let PROVIDER_ALIASES = {};
+
+
+    /* 推理强度滑条配色：按档位换色（青 → 蓝 → 靛 → 紫 → 品红 → 橙），与 Codex 原生近似 */
+    const EFFORT_PALETTE = ["#22d3ee", "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#f97316"];
+
+    function hexToRgba(hex, alpha) {
+      const value = String(hex).replace("#", "");
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return "rgba(" + r + ", " + g + ", " + b + ", " + alpha + ")";
+    }
+
+    function effortTone(ratio) {
+      const clamped = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0));
+      const index = Math.round(clamped * (EFFORT_PALETTE.length - 1));
+      const color = EFFORT_PALETTE[index];
+      return { color: color, tint: hexToRgba(color, 0.16), ring: hexToRgba(color, 0.46) };
+    }
 
     function rpcId() {
       const hex = "0123456789abcdef";
@@ -158,7 +188,7 @@ window.__ModuleLoader__.load({
         --mbp-text-3: #8d939b;
         --mbp-track: rgba(15, 17, 21, 0.10);
         --mbp-shadow: 0 18px 48px rgba(15, 17, 21, 0.16), 0 4px 12px rgba(15, 17, 21, 0.08);
-        --mbp-gradient: linear-gradient(90deg, #56b8f5 0%, #4176e6 34%, #8b5cf6 66%, #f59e0b 100%);
+        --mbp-gradient: linear-gradient(90deg, #22d3ee 0%, #3b82f6 22%, #6366f1 42%, #a855f7 62%, #ec4899 82%, #f97316 100%);
       }
       body[data-ds-dark-theme] .dsh-mbp-scope {
         --mbp-accent: #7aaaff;
@@ -272,7 +302,7 @@ window.__ModuleLoader__.load({
         width: 28px;
         height: 28px;
         padding: 0;
-        border-radius: 7px;
+        border-radius: 50%;
         border: 1px solid transparent;
         background: transparent;
         color: var(--mbp-text-2);
@@ -378,8 +408,8 @@ window.__ModuleLoader__.load({
         border-color: var(--mbp-accent);
         background: var(--mbp-accent-soft);
       }
-      .dsh-mbp-card.dragging { opacity: 0.45; }
-      .dsh-mbp-card.drop-target { border-color: var(--mbp-accent); box-shadow: inset 0 0 0 1px var(--mbp-accent); }
+      .dsh-mbp-card.dragging { opacity: 0.55; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18); }
+      .dsh-mbp-card.dragging, .dsh-mbp-card-grip:active, .dsh-mbp-setting-grip:active { cursor: grabbing; }
       .dsh-mbp-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
       .dsh-mbp-card-grip {
         flex: none;
@@ -388,6 +418,7 @@ window.__ModuleLoader__.load({
         opacity: 0;
         transition: opacity 0.14s ease;
         line-height: 0;
+        touch-action: none;
       }
       .dsh-mbp-card:hover .dsh-mbp-card-grip { opacity: 1; }
       .dsh-mbp-card-grip svg { display: block; width: 10px; height: 10px; fill: currentColor; }
@@ -516,6 +547,88 @@ window.__ModuleLoader__.load({
       .dsh-mbp-expand:hover { background: var(--mbp-surface-3); color: var(--mbp-text); }
       .dsh-mbp-expand.open { transform: rotate(180deg); }
       .dsh-mbp-expand svg { display: block; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+      .dsh-mbp-alias-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 10px;
+      }
+      .dsh-mbp-alias-note {
+        flex: 1;
+        min-width: 0;
+        font-size: 11px;
+        color: var(--mbp-text-3);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dsh-mbp-alias-apply {
+        flex: none;
+        height: 24px;
+        padding: 0 10px;
+        font-size: 11px;
+        border-radius: 999px;
+        border: 1px solid var(--mbp-accent);
+        background: var(--mbp-accent-soft);
+        color: var(--mbp-accent-text);
+        cursor: pointer;
+        transition: opacity 0.14s ease;
+      }
+      .dsh-mbp-alias-apply:disabled { opacity: 0.45; cursor: default; }
+      .dsh-mbp-rename {
+        flex: none;
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 50%;
+        background: transparent;
+        color: var(--mbp-text-3);
+        cursor: pointer;
+        transition: background 0.14s ease, color 0.14s ease;
+      }
+      .dsh-mbp-rename:hover { background: var(--mbp-surface-3); color: var(--mbp-text); }
+      .dsh-mbp-rename.on { color: var(--mbp-accent-text); }
+      .dsh-mbp-rename svg { display: block; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+      .dsh-mbp-rename-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 10px;
+        border-top: 1px solid var(--mbp-border);
+      }
+      .dsh-mbp-rename-input {
+        flex: 1;
+        min-width: 0;
+        height: 26px;
+        padding: 0 8px;
+        font-size: 12px;
+        border-radius: 6px;
+        border: 1px solid var(--mbp-border);
+        background: var(--mbp-surface);
+        color: var(--mbp-text);
+        outline: none;
+      }
+      .dsh-mbp-rename-input:focus { border-color: var(--mbp-accent); }
+      .dsh-mbp-rename-save,
+      .dsh-mbp-rename-reset {
+        flex: none;
+        height: 26px;
+        padding: 0 10px;
+        font-size: 11.5px;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 1px solid var(--mbp-border);
+        background: var(--mbp-surface-2);
+        color: var(--mbp-text-2);
+      }
+      .dsh-mbp-rename-save {
+        border-color: var(--mbp-accent);
+        background: var(--mbp-accent-soft);
+        color: var(--mbp-accent-text);
+      }
       .dsh-mbp-setting-models { padding: 4px 6px 6px; max-height: 208px; overflow-y: auto; }
       .dsh-mbp-setting-models::-webkit-scrollbar { width: 8px; }
       .dsh-mbp-setting-models::-webkit-scrollbar-thumb { background: var(--mbp-track); border-radius: 4px; }
@@ -538,6 +651,18 @@ window.__ModuleLoader__.load({
         white-space: nowrap;
       }
       .dsh-mbp-setting-row.off .dsh-mbp-setting-label { color: var(--mbp-text-3); text-decoration: line-through; }
+      .dsh-mbp-setting-row.dragging { opacity: 0.55; background: var(--mbp-accent-soft); }
+      .dsh-mbp-setting-grip {
+        flex: none;
+        color: var(--mbp-text-3);
+        opacity: 0;
+        transition: opacity 0.14s ease;
+        line-height: 0;
+        touch-action: none;
+        cursor: grab;
+      }
+      .dsh-mbp-setting-row:hover .dsh-mbp-setting-grip { opacity: 1; }
+      .dsh-mbp-setting-grip svg { display: block; width: 10px; height: 10px; fill: currentColor; }
       .dsh-mbp-switch {
         flex: none;
         position: relative;
@@ -574,70 +699,128 @@ window.__ModuleLoader__.load({
         border-top: 1px solid var(--mbp-border);
         background: var(--mbp-surface-2);
       }
-      .dsh-mbp-param { display: flex; flex-direction: column; gap: 7px; }
-      .dsh-mbp-param + .dsh-mbp-param { padding-top: 10px; border-top: 1px dashed var(--mbp-border); }
-      .dsh-mbp-param-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-      .dsh-mbp-param-label { font-size: 11.5px; font-weight: 600; color: var(--mbp-text-2); letter-spacing: 0.2px; }
-      .dsh-mbp-param-value { font-size: 11.5px; font-weight: 600; color: var(--mbp-accent-text); }
+      .dsh-mbp-param { display: flex; flex-direction: column; gap: 8px; }
+      .dsh-mbp-param + .dsh-mbp-param { padding-top: 12px; border-top: 1px dashed var(--mbp-border); }
+      .dsh-mbp-param-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .dsh-mbp-param-label { font-size: 12px; font-weight: 600; color: var(--mbp-text-2); letter-spacing: 0.2px; }
+      .dsh-mbp-param-value { font-size: 12px; font-weight: 600; color: var(--mbp-accent-text); }
       .dsh-mbp-param-value.muted { color: var(--mbp-text-3); font-weight: 500; }
 
-      /* Codex 风格彩色拖动条 */
+      /* Codex 风格彩色拖动条：加粗 2.7 倍 + 六段渐变 + 光晕 + 高档位星尘 */
+      .dsh-mbp-eff-value {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px 3px 8px;
+        border-radius: 999px;
+        font-size: 12.5px;
+        font-weight: 700;
+        letter-spacing: 0.2px;
+        color: var(--mbp-eff-color, var(--mbp-accent-text));
+        background: var(--mbp-eff-tint, var(--mbp-accent-soft));
+        box-shadow: inset 0 0 0 1px var(--mbp-eff-ring, var(--mbp-accent-ring));
+      }
+      .dsh-mbp-eff-value.muted { color: var(--mbp-text-3); background: rgba(127, 132, 141, 0.12); box-shadow: inset 0 0 0 1px var(--mbp-border); }
+      .dsh-mbp-eff-bolt { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+      .dsh-mbp-slider-shell { position: relative; display: flex; align-items: center; height: 36px; margin: 1px 0 -1px; isolation: isolate; }
+      .dsh-mbp-aura {
+        position: absolute;
+        left: 5px;
+        right: 5px;
+        top: 50%;
+        height: 22px;
+        transform: translateY(-50%);
+        border-radius: 999px;
+        background-image: var(--mbp-gradient);
+        background-repeat: no-repeat;
+        background-size: var(--mbp-fill, 0%) 100%;
+        filter: blur(10px) saturate(1.35);
+        opacity: 0.72;
+        pointer-events: none;
+        z-index: 0;
+      }
+      .dsh-mbp-sparkle {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        top: 0;
+        bottom: 0;
+        z-index: 2;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.22s ease;
+      }
+      .dsh-mbp-sparkle.hot { opacity: 1; }
+      .dsh-mbp-sparkle i {
+        position: absolute;
+        top: 50%;
+        width: 4px;
+        height: 4px;
+        margin: -2px 0 0 -2px;
+        border-radius: 50%;
+        background: #ffffff;
+        box-shadow: 0 0 6px rgba(255, 255, 255, 0.95), 0 0 12px var(--mbp-eff-color, #a855f7);
+        animation: dsh-mbp-twinkle 1.9s ease-in-out infinite;
+      }
+      @keyframes dsh-mbp-twinkle {
+        0%, 100% { opacity: 0; transform: scale(0.35); }
+        45% { opacity: 0.95; transform: scale(1); }
+      }
       .dsh-mbp-range {
+        position: relative;
+        z-index: 1;
         -webkit-appearance: none;
         appearance: none;
         width: 100%;
-        height: 18px;
+        height: 36px;
         margin: 0;
         background: transparent;
         cursor: pointer;
         outline: none;
       }
       .dsh-mbp-range::-webkit-slider-runnable-track {
-        height: 6px;
+        height: 16px;
         border-radius: 999px;
         background-image: var(--mbp-gradient);
         background-repeat: no-repeat;
         background-size: var(--mbp-fill, 0%) 100%;
         background-color: var(--mbp-track);
-        box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), inset 0 -1px 1px rgba(0, 0, 0, 0.14), 0 1px 2px rgba(0, 0, 0, 0.10);
       }
       .dsh-mbp-range::-webkit-slider-thumb {
         -webkit-appearance: none;
         appearance: none;
-        width: 15px;
-        height: 15px;
-        margin-top: -4.5px;
+        width: 24px;
+        height: 24px;
+        margin-top: -4px;
         border-radius: 50%;
-        border: 2px solid var(--mbp-surface);
-        background: #ffffff;
-        box-shadow: 0 0 0 1px var(--mbp-accent-ring), 0 2px 6px rgba(0, 0, 0, 0.28);
-        transition: box-shadow 0.15s ease, transform 0.15s ease;
+        border: 3px solid #ffffff;
+        background: var(--mbp-eff-color, var(--mbp-accent));
+        box-shadow: 0 0 0 1px rgba(15, 17, 21, 0.16), 0 3px 10px var(--mbp-eff-ring, rgba(65, 118, 230, 0.34)), 0 2px 6px rgba(0, 0, 0, 0.22);
+        transition: box-shadow 0.16s ease, transform 0.16s ease;
       }
-      .dsh-mbp-range:hover::-webkit-slider-thumb { transform: scale(1.08); box-shadow: 0 0 0 4px var(--mbp-accent-soft), 0 2px 8px rgba(0, 0, 0, 0.3); }
-      .dsh-mbp-range:active::-webkit-slider-thumb { box-shadow: 0 0 0 6px var(--mbp-accent-soft), 0 2px 8px rgba(0, 0, 0, 0.32); }
-      .dsh-mbp-range:disabled { opacity: 0.5; cursor: not-allowed; }
-      .dsh-mbp-ticks {
-        position: relative;
-        height: 14px;
-        margin: -2px 0 0;
-      }
+      .dsh-mbp-range:hover::-webkit-slider-thumb { transform: scale(1.07); box-shadow: 0 0 0 5px var(--mbp-eff-tint, var(--mbp-accent-soft)), 0 3px 12px var(--mbp-eff-ring, rgba(65, 118, 230, 0.34)); }
+      .dsh-mbp-range:active::-webkit-slider-thumb { transform: scale(1.11); box-shadow: 0 0 0 8px var(--mbp-eff-tint, var(--mbp-accent-soft)), 0 3px 14px var(--mbp-eff-ring, rgba(65, 118, 230, 0.34)); }
+      .dsh-mbp-range:disabled { opacity: 0.55; cursor: not-allowed; }
+      .dsh-mbp-ticks { position: relative; height: 17px; margin: 5px 0 0; }
       .dsh-mbp-tick {
         position: absolute;
         top: 0;
         transform: translateX(-50%);
         max-width: 96px;
-        font-size: 10.5px;
-        line-height: 14px;
+        font-size: 11.5px;
+        line-height: 17px;
+        font-weight: 600;
         color: var(--mbp-text-3);
         text-align: center;
         cursor: pointer;
-        transition: color 0.14s ease;
+        transition: color 0.14s ease, opacity 0.14s ease, transform 0.14s ease;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .dsh-mbp-tick.active { color: var(--mbp-accent-text); font-weight: 700; }
-      .dsh-mbp-tick:hover { color: var(--mbp-text); }
+      .dsh-mbp-tick.active { color: var(--mbp-eff-color, var(--mbp-accent-text)); font-weight: 800; transform: translateX(-50%) scale(1.06); }
+      .dsh-mbp-tick:hover { opacity: 1; color: var(--mbp-text); }
       .dsh-mbp-param-hint { font-size: 10.5px; color: var(--mbp-text-3); }
       .dsh-mbp-reset {
         border: none;
@@ -703,6 +886,8 @@ window.__ModuleLoader__.load({
     }
 
     function getProviderDisplayName(groupId, groupName) {
+      const renamed = PROVIDER_ALIASES[groupId];
+      if (typeof renamed === "string" && renamed.trim().length > 0) return renamed.trim();
       if (groupId === "deepseek-account") return "DeepSeek 账号";
       if (groupId === "deepseek-official") return "DeepSeek (API)";
       if (groupId === CODEX_PROVIDER) return (groupName && groupName.trim()) || "ChatGPT 订阅";
@@ -722,13 +907,17 @@ window.__ModuleLoader__.load({
 
     const ICON_CHEVRON = icon(["M4 6.5L8 10.5L12 6.5"]);
     const ICON_BACK = icon(["M10 4L6 8L10 12"]);
-    const ICON_GEAR = icon([
-      "M6.6 2.3a1.1 1.1 0 0 1 2.8 0l.2.7a1.1 1.1 0 0 0 1.3.7l.7-.2a1.1 1.1 0 0 1 1.3 1.6l-.4.6a1.1 1.1 0 0 0 .4 1.5l.6.4a1.1 1.1 0 0 1 0 1.9l-.6.4a1.1 1.1 0 0 0-.4 1.5l.4.6a1.1 1.1 0 0 1-1.3 1.6l-.7-.2a1.1 1.1 0 0 0-1.3.7l-.2.7a1.1 1.1 0 0 1-1.9 0l-.2-.7a1.1 1.1 0 0 0-1.3-.7l-.7.2a1.1 1.1 0 0 1-1.3-1.6l.4-.6a1.1 1.1 0 0 0-.4-1.5l-.6-.4a1.1 1.1 0 0 1 0-1.9l.6-.4a1.1 1.1 0 0 0 .4-1.5l-.4-.6A1.1 1.1 0 0 1 4.3 3.5l.7.2a1.1 1.1 0 0 0 1.3-.7z",
-      "M10 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"
-    ]);
+    const ICON_GEAR = h("svg", { viewBox: "0 0 24 24", "aria-hidden": true, style: { strokeWidth: 1.9 } },
+      h("path", { d: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" }),
+      h("circle", { cx: 12, cy: 12, r: 3 })
+    );
     const ICON_SEARCH = icon(["M7.2 12.4a5.2 5.2 0 1 0 0-10.4 5.2 5.2 0 0 0 0 10.4z", "M11.2 11.2L14 14"]);
     const ICON_CHECK = icon(["M3.5 8.4L6.6 11.5L12.5 5"]);
     const ICON_BOLT = icon(["M8.6 1.8L3.4 9.1h3.7l-.6 5.1 5.2-7.3H7.9z"]);
+    const ICON_PENCIL = icon([
+      "M3.2 12.8l8.4-8.4 1.9 1.9-8.4 8.4-2.4.5z",
+      "M11.7 2.9l.6-.6a1.1 1.1 0 0 1 1.6 1.6l-.6.6z"
+    ]);
     const ICON_GRIP = h("svg", { viewBox: "0 0 8 12", "aria-hidden": true },
       [0, 1, 2, 3, 4, 5].map((i) => h("circle", { key: i, cx: i % 2 === 0 ? 2 : 6, cy: 2 + Math.floor(i / 2) * 4, r: 1, fill: "currentColor" }))
     );
@@ -787,16 +976,87 @@ window.__ModuleLoader__.load({
       const [drilledGroupId, setDrilledGroupId] = useState(null);
       const [expandedProviders, setExpandedProviders] = useState([]);
       const [popoverPos, setPopoverPos] = useState({ left: 0, top: 0, ready: false });
-      const [dropTargetId, setDropTargetId] = useState(null);
-      const [draggingId, setDraggingId] = useState(null);
+      const dragRef = useRef(null);
+      const [dragInfo, setDragInfo] = useState(null);
       const [sliderIndex, setSliderIndex] = useState(null);
       const [codex, setCodex] = useState({ ...EMPTY_CODEX });
+      const [nameState, setNameState] = useState({ providers: [], aliases: {}, ready: false, loaded: false, busy: false, error: null });
+      const [renamingId, setRenamingId] = useState(null);
+      const [renameDraft, setRenameDraft] = useState("");
+      PROVIDER_ALIASES = nameState.aliases;
 
       const triggerRef = useRef(null);
       const popoverRef = useRef(null);
       const searchInputRef = useRef(null);
       const dragCooldownRef = useRef(0);
       const commitTimerRef = useRef(null);
+      const loadAliases = useCallback(async () => {
+        try {
+          const response = await fetch(ALIAS_ENDPOINT);
+          const body = await response.json().catch(() => null);
+          if (!response.ok || !body) throw new Error("HTTP " + response.status);
+          setNameState({
+            providers: Array.isArray(body.providers) ? body.providers : [],
+            aliases: body.aliases && typeof body.aliases === "object" ? body.aliases : {},
+            ready: body.ready === true,
+            loaded: true,
+            busy: false,
+            error: null
+          });
+        } catch (error) {
+          setNameState((previous) => ({
+            ...previous,
+            loaded: true,
+            busy: false,
+            error: String((error && error.message) || error)
+          }));
+        }
+      }, []);
+
+      const reloadCatalog = useCallback(async () => {
+        if (!load) return;
+        try {
+          const pending = load();
+          if (pending && typeof pending.then === "function") await pending;
+        } catch (error) {}
+      }, [load]);
+
+      const postAlias = useCallback(async (op, id, rawName) => {
+        const name = typeof rawName === "string" ? rawName.trim() : "";
+        const actualOp = op === "set" && name.length === 0 ? "clear" : op;
+        setNameState((previous) => ({ ...previous, busy: true, error: null }));
+        try {
+          const response = await fetch(ALIAS_ENDPOINT, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ op: actualOp, id, name })
+          });
+          const body = await response.json().catch(() => null);
+          if (!response.ok || !body || body.ok !== true) {
+            throw new Error((body && body.error) || "HTTP " + response.status);
+          }
+          setNameState({
+            providers: Array.isArray(body.providers) ? body.providers : [],
+            aliases: body.aliases && typeof body.aliases === "object" ? body.aliases : {},
+            ready: body.ready !== false,
+            loaded: true,
+            busy: false,
+            error: null
+          });
+          await reloadCatalog();
+        } catch (error) {
+          setNameState((previous) => ({
+            ...previous,
+            busy: false,
+            error: String((error && error.message) || error)
+          }));
+        }
+      }, [reloadCatalog]);
+
+      useEffect(() => {
+        if (!open || view !== "settings" || nameState.loaded) return;
+        void loadAliases();
+      }, [open, view, nameState.loaded, loadAliases]);
 
       const bridge = useMemo(() => createCodexBridge(() => context), [context]);
 
@@ -807,6 +1067,7 @@ window.__ModuleLoader__.load({
       const orderedGroups = useMemo(() => {
         const raw = Array.isArray(snapshot?.groups) ? snapshot.groups.slice() : [];
         const order = prefs.order;
+        const modelOrder = prefs.modelOrder || {};
         const indexOf = (id) => {
           const at = order.indexOf(id);
           return at === -1 ? Number.MAX_SAFE_INTEGER : at;
@@ -820,8 +1081,20 @@ window.__ModuleLoader__.load({
           if (ra !== rb) return ra - rb;
           return String(a.name || a.id).localeCompare(String(b.name || b.id));
         });
-        return raw;
-      }, [snapshot?.groups, prefs.order]);
+        return raw.map((group) => {
+          const models = Array.isArray(group.models) ? group.models.slice() : [];
+          const custom = Array.isArray(modelOrder[group.id]) ? modelOrder[group.id] : null;
+          if (custom && custom.length > 0) {
+            const modelRank = (id) => {
+              const at = custom.indexOf(id);
+              return at === -1 ? Number.MAX_SAFE_INTEGER : at;
+            };
+            models.sort((a, b) => modelRank(a.id) - modelRank(b.id));
+            return { ...group, models };
+          }
+          return group;
+        });
+      }, [snapshot?.groups, prefs.order, prefs.modelOrder]);
 
       const isModelHidden = useCallback(
         (groupId, modelId) => (prefs.hiddenModels[groupId] || []).includes(modelId),
@@ -846,6 +1119,7 @@ window.__ModuleLoader__.load({
       }, [prefs.hiddenModels]);
 
       const hiddenCount = prefs.hiddenProviders.length + hiddenModelCount;
+      const hasCustomOrder = prefs.order.length > 0 || Object.keys(prefs.modelOrder || {}).length > 0;
 
       /* ---- 当前选择 -------------------------------------------------- */
 
@@ -909,8 +1183,8 @@ window.__ModuleLoader__.load({
         setView("browse");
         setDrilledGroupId(null);
         setQuery("");
-        setDraggingId(null);
-        setDropTargetId(null);
+        dragRef.current = null;
+        setDragInfo(null);
       }, []);
 
       useEffect(() => {
@@ -1086,6 +1360,85 @@ window.__ModuleLoader__.load({
         persistPrefs((previous) => ({ ...previous, order: ids }));
       }, [orderedGroups, persistPrefs]);
 
+      const moveModel = useCallback((providerId, fromId, toId) => {
+        if (!providerId || !fromId || !toId || fromId === toId) return;
+        const group = orderedGroups.find((entry) => entry.id === providerId);
+        const ids = (group?.models || []).map((model) => model.id);
+        const fromIndex = ids.indexOf(fromId);
+        if (fromIndex < 0) return;
+        ids.splice(fromIndex, 1);
+        const toIndex = ids.indexOf(toId);
+        if (toIndex < 0) ids.push(fromId);
+        else ids.splice(toIndex, 0, fromId);
+        persistPrefs((previous) => {
+          const modelOrder = { ...(previous.modelOrder || {}) };
+          modelOrder[providerId] = ids;
+          return { ...previous, modelOrder };
+        });
+      }, [orderedGroups, persistPrefs]);
+
+      const beginDrag = useCallback((event, kind, id, providerId) => {
+        if (event.button !== undefined && event.button !== 0 && event.button !== -1) return;
+        const target = event.target;
+        if (target && target.closest && target.closest("button")) return;
+        dragRef.current = {
+          kind,
+          id,
+          providerId: providerId || null,
+          startX: event.clientX,
+          startY: event.clientY,
+          active: false,
+          lastAt: 0
+        };
+      }, []);
+
+      useEffect(() => {
+        const handlePointerMove = (event) => {
+          const pending = dragRef.current;
+          if (!pending) return;
+          if (!pending.active) {
+            const dx = event.clientX - pending.startX;
+            const dy = event.clientY - pending.startY;
+            if (dx * dx + dy * dy < 36) return;
+            pending.active = true;
+            setDragInfo({ kind: pending.kind, id: pending.id, providerId: pending.providerId });
+          }
+          if (event.cancelable) event.preventDefault();
+          const now = Date.now();
+          if (now - pending.lastAt < 70) return;
+          pending.lastAt = now;
+          const element = document.elementFromPoint(event.clientX, event.clientY);
+          const node = element && element.closest ? element.closest("[data-mbp-drag]") : null;
+          if (!node) return;
+          const id = node.getAttribute("data-mbp-id");
+          if (!id || id === pending.id) return;
+          const kind = node.getAttribute("data-mbp-drag");
+          if (pending.kind === "provider" && kind === "provider") {
+            moveProvider(pending.id, id);
+            return;
+          }
+          if (pending.kind === "model" && kind === "model") {
+            const providerId = node.getAttribute("data-mbp-provider") || "";
+            if (!providerId || providerId !== pending.providerId) return;
+            moveModel(providerId, pending.id, id);
+          }
+        };
+        const stopDrag = () => {
+          const pending = dragRef.current;
+          dragRef.current = null;
+          if (pending && pending.active) dragCooldownRef.current = Date.now();
+          setDragInfo(null);
+        };
+        window.addEventListener("pointermove", handlePointerMove, { passive: false });
+        window.addEventListener("pointerup", stopDrag);
+        window.addEventListener("pointercancel", stopDrag);
+        return () => {
+          window.removeEventListener("pointermove", handlePointerMove);
+          window.removeEventListener("pointerup", stopDrag);
+          window.removeEventListener("pointercancel", stopDrag);
+        };
+      }, [moveProvider, moveModel]);
+
       const resetPrefs = useCallback(() => {
         persistPrefs(() => ({ ...EMPTY_PREFS }));
       }, [persistPrefs]);
@@ -1208,47 +1561,23 @@ window.__ModuleLoader__.load({
             visibleGroups.map((group) => {
               const isCurrentSource = currentProvider === group.id;
               const name = getProviderDisplayName(group.id, group.name);
+              const draggingThis = Boolean(dragInfo)
+                && dragInfo.kind === "provider"
+                && dragInfo.id === group.id;
               return h("div", {
                 key: group.id,
                 className: "dsh-mbp-card"
                   + (isCurrentSource ? " current" : "")
-                  + (draggingId === group.id ? " dragging" : "")
-                  + (dropTargetId === group.id && draggingId !== group.id ? " drop-target" : ""),
-                draggable: true,
-                onDragStart: (event) => {
-                  setDraggingId(group.id);
-                  try {
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", group.id);
-                  } catch (e) {}
-                },
-                onDragOver: (event) => {
-                  if (!draggingId) return;
-                  event.preventDefault();
-                  try { event.dataTransfer.dropEffect = "move"; } catch (e) {}
-                  if (dropTargetId !== group.id) setDropTargetId(group.id);
-                },
-                onDragLeave: () => {
-                  if (dropTargetId === group.id) setDropTargetId(null);
-                },
-                onDrop: (event) => {
-                  event.preventDefault();
-                  if (draggingId) moveProvider(draggingId, group.id);
-                  setDraggingId(null);
-                  setDropTargetId(null);
-                  dragCooldownRef.current = Date.now();
-                },
-                onDragEnd: () => {
-                  setDraggingId(null);
-                  setDropTargetId(null);
-                  dragCooldownRef.current = Date.now();
-                },
+                  + (draggingThis ? " dragging" : ""),
+                "data-mbp-drag": "provider",
+                "data-mbp-id": group.id,
+                onPointerDown: (event) => beginDrag(event, "provider", group.id, null),
                 onClick: () => {
                   if (Date.now() - dragCooldownRef.current < 260) return;
                   setDrilledGroupId(group.id);
                   setQuery("");
                 },
-                title: "拖动可调整顺序，点击进入选择模型"
+                title: "按住拖动可调整来源顺序（可一次跨过多个卡片），点击进入选择模型"
               },
                 h("div", { className: "dsh-mbp-card-head" },
                   h("span", { className: "dsh-mbp-card-grip" }, ICON_GRIP),
@@ -1272,7 +1601,25 @@ window.__ModuleLoader__.load({
             h("span", { className: "dsh-mbp-list-count" }, hiddenCount > 0 ? `已隐藏 ${hiddenCount} 项` : "全部显示")
           ),
           h("p", { className: "dsh-mbp-settings-hint" },
-            "关闭某个来源会隐藏它的全部模型；展开后可以逐个模型开关。此处的选择仅影响本机界面，不影响模型本身是否可用。"
+            "关闭某个来源会隐藏它的全部模型；展开后可以逐个模型开关，拖动模型行可调整该来源内部的排列顺序（可一次跨多行）。来源卡片的先后顺序在列表页按住卡片拖动即可调整。此处的选择仅影响本机界面，不影响模型本身是否可用。"
+          ),
+          h("div", { className: "dsh-mbp-alias-bar" },
+            h("span", { className: "dsh-mbp-alias-note", title: nameState.error || "" },
+              nameState.error
+                ? "宿主未就绪：" + nameState.error
+                : nameState.loaded
+                  ? (nameState.ready ? "改名会写入模型注册表，并同步到全部界面" : "已保存名称，等待模型服务就绪")
+                  : "正在读取来源…"
+            ),
+            h("button", {
+              type: "button",
+              className: "dsh-mbp-alias-apply",
+              disabled: nameState.busy || !nameState.loaded || Boolean(nameState.error),
+              title: "把已保存的名称重新写入注册表，并刷新全部界面",
+              onClick: () => {
+                void postAlias("apply");
+              }
+            }, nameState.busy ? "同步中…" : "同步到全部界面")
           ),
           orderedGroups.length === 0
             ? h("div", { className: "dsh-mbp-empty" }, "暂无可配置的来源")
@@ -1285,6 +1632,21 @@ window.__ModuleLoader__.load({
                 return h("div", { key: group.id, className: "dsh-mbp-setting" },
                   h("div", { className: "dsh-mbp-setting-head" },
                     h("span", { className: "dsh-mbp-setting-name" }, getProviderDisplayName(group.id, group.name)),
+                    h("button", {
+                      type: "button",
+                      className: "dsh-mbp-rename" + (renamingId === group.id ? " on" : ""),
+                      title: "重命名这个来源",
+                      "aria-label": "重命名 " + getProviderDisplayName(group.id, group.name),
+                      onClick: (event) => {
+                        event.stopPropagation();
+                        if (renamingId === group.id) {
+                          setRenamingId(null);
+                          return;
+                        }
+                        setRenamingId(group.id);
+                        setRenameDraft(nameState.aliases[group.id] || "");
+                      }
+                    }, ICON_PENCIL),
                     h("span", { className: "dsh-mbp-setting-count" }, `${Math.max(0, visibleCount)}/${models.length}`),
                     h("button", {
                       type: "button",
@@ -1304,17 +1666,72 @@ window.__ModuleLoader__.load({
                       onClick: () => toggleExpanded(group.id)
                     }, ICON_CHEVRON)
                   ),
+                  renamingId === group.id
+                    ? h("div", { className: "dsh-mbp-rename-row" },
+                        h("input", {
+                          type: "text",
+                          className: "dsh-mbp-rename-input",
+                          autoFocus: true,
+                          maxLength: 48,
+                          spellCheck: false,
+                          placeholder: (nameState.providers.find((entry) => entry.id === group.id) || {}).base || group.name || group.id,
+                          value: renameDraft,
+                          onChange: (event) => setRenameDraft(event.target.value),
+                          onKeyDown: (event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void postAlias("set", group.id, renameDraft);
+                              setRenamingId(null);
+                            }
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              setRenamingId(null);
+                            }
+                          }
+                        }),
+                        h("button", {
+                          type: "button",
+                          className: "dsh-mbp-rename-save",
+                          onClick: () => {
+                            void postAlias("set", group.id, renameDraft);
+                            setRenamingId(null);
+                          }
+                        }, "保存"),
+                        h("button", {
+                          type: "button",
+                          className: "dsh-mbp-rename-reset",
+                          onClick: () => {
+                            void postAlias("clear", group.id);
+                            setRenamingId(null);
+                            setRenameDraft("");
+                          }
+                        }, "恢复默认")
+                      )
+                    : null,
                   expanded
                     ? h("div", { className: "dsh-mbp-setting-models" },
                         models.length === 0
                           ? h("div", { className: "dsh-mbp-empty", style: { padding: "14px 8px" } }, "该来源没有模型")
                           : models.map((model) => {
                               const hidden = hiddenModels.includes(model.id);
+                              const dragActive = Boolean(dragInfo)
+                                && dragInfo.kind === "model"
+                                && dragInfo.providerId === group.id
+                                && dragInfo.id === model.id;
                               return h("div", {
                                 key: model.id,
-                                className: "dsh-mbp-setting-row" + (hidden || providerHidden ? " off" : ""),
-                                onClick: () => toggleModel(group.id, model.id)
+                                className: "dsh-mbp-setting-row" + (hidden || providerHidden ? " off" : "") + (dragActive ? " dragging" : ""),
+                                "data-mbp-drag": "model",
+                                "data-mbp-id": model.id,
+                                "data-mbp-provider": group.id,
+                                onPointerDown: (event) => beginDrag(event, "model", model.id, group.id),
+                                onClick: () => {
+                                  if (Date.now() - dragCooldownRef.current < 260) return;
+                                  toggleModel(group.id, model.id);
+                                },
+                                title: "上下拖动可调整该来源内部模型顺序，点击切换显示"
                               },
+                                h("span", { className: "dsh-mbp-setting-grip", "aria-hidden": "true" }, ICON_GRIP),
                                 h("span", { className: "dsh-mbp-setting-label", title: model.id }, model.name || model.id),
                                 h("button", {
                                   type: "button",
@@ -1334,7 +1751,7 @@ window.__ModuleLoader__.load({
                     : null
                 );
               }),
-          hiddenCount > 0
+          hiddenCount > 0 || hasCustomOrder
             ? h("div", { style: { marginTop: "10px", textAlign: "right" } },
                 h("button", { type: "button", className: "dsh-mbp-reset", onClick: resetPrefs }, "恢复全部显示与默认顺序")
               )
@@ -1346,45 +1763,67 @@ window.__ModuleLoader__.load({
         if (efforts.length === 0) return null;
         const active = efforts[effortIndex];
         const isExplicit = currentEffort !== undefined && currentEffort !== null;
-        const pct = efforts.length > 1 ? (effortIndex / (efforts.length - 1)) * 100 : 100;
-        return h("div", { className: "dsh-mbp-param" },
+        const ratio = efforts.length > 1 ? effortIndex / (efforts.length - 1) : 1;
+        const pct = Math.max(2, Math.min(100, efforts.length > 1 ? ratio * 100 : 100));
+        const tone = effortTone(ratio);
+        const hot = efforts.length > 2 && ratio >= 0.66;
+        const shellStyle = { "--mbp-fill": pct.toFixed(2) + "%" };
+        return h("div", {
+          className: "dsh-mbp-param",
+          style: { "--mbp-eff-color": tone.color, "--mbp-eff-tint": tone.tint, "--mbp-eff-ring": tone.ring }
+        },
           h("div", { className: "dsh-mbp-param-head" },
             h("span", { className: "dsh-mbp-param-label" }, "推理强度"),
-            h("span", { className: "dsh-mbp-param-value" + (active ? "" : " muted") },
+            h("span", { className: "dsh-mbp-eff-value" + (active ? "" : " muted") },
+              h("span", { className: "dsh-mbp-eff-bolt", "aria-hidden": "true" }),
               active ? (active.name || active.id) : "默认")
           ),
-          h("input", {
-            type: "range",
-            className: "dsh-mbp-range",
-            min: 0,
-            max: Math.max(0, efforts.length - 1),
-            step: 1,
-            value: effortIndex,
-            disabled: locked,
-            style: { "--mbp-fill": `${Math.max(2, Math.min(100, pct))}%` },
-            "aria-label": "推理强度",
-            onChange: (event) => {
-              const index = Number(event.target.value);
-              setSliderIndex(index);
-              scheduleEffort(efforts[index]?.id);
-            },
-            onPointerUp: () => {
-              const index = sliderIndex === null ? effortIndex : sliderIndex;
-              flushEffort(efforts[index]?.id);
-            },
-            onKeyUp: () => {
-              const index = sliderIndex === null ? effortIndex : sliderIndex;
-              flushEffort(efforts[index]?.id);
-            }
-          }),
+          h("div", { className: "dsh-mbp-slider-shell" },
+            h("div", { className: "dsh-mbp-aura", style: shellStyle }),
+            h("div", { className: "dsh-mbp-sparkle" + (hot ? " hot" : "") },
+              [14, 28, 41, 55, 69, 84].map((pos, index) =>
+                h("i", { key: pos, style: { left: pos + "%", animationDelay: (index * 0.31).toFixed(2) + "s" } })
+              )
+            ),
+            h("input", {
+              type: "range",
+              className: "dsh-mbp-range",
+              min: 0,
+              max: Math.max(0, efforts.length - 1),
+              step: 1,
+              value: effortIndex,
+              disabled: locked,
+              style: shellStyle,
+              "aria-label": "推理强度",
+              onChange: (event) => {
+                const index = Number(event.target.value);
+                setSliderIndex(index);
+                scheduleEffort(efforts[index] && efforts[index].id);
+              },
+              onPointerUp: () => {
+                const index = sliderIndex === null ? effortIndex : sliderIndex;
+                flushEffort(efforts[index] && efforts[index].id);
+              },
+              onKeyUp: () => {
+                const index = sliderIndex === null ? effortIndex : sliderIndex;
+                flushEffort(efforts[index] && efforts[index].id);
+              }
+            })
+          ),
           h("div", { className: "dsh-mbp-ticks" },
             efforts.map((effort, index) => {
-              const ratio = efforts.length > 1 ? index / (efforts.length - 1) : 0.5;
+              const tickRatio = efforts.length > 1 ? index / (efforts.length - 1) : 0.5;
+              const tickTone = effortTone(tickRatio);
+              const isActive = index === effortIndex;
               return h("span", {
                 key: effort.id,
-                className: "dsh-mbp-tick" + (index === effortIndex ? " active" : ""),
+                className: "dsh-mbp-tick" + (isActive ? " active" : ""),
                 title: effort.description || effort.name || effort.id,
-                style: { left: `calc(${(ratio * 100).toFixed(4)}% + ${(7.5 * (1 - ratio * 2)).toFixed(2)}px)` },
+                style: {
+                  left: "calc(" + (tickRatio * 100).toFixed(4) + "% + " + (12 * (1 - tickRatio * 2)).toFixed(2) + "px)",
+                  color: tickTone.color,
+                  opacity: isActive ? 1 : 0.62
+                },
                 onClick: () => {
                   setSliderIndex(index);
                   flushEffort(effort.id);
@@ -1401,7 +1840,7 @@ window.__ModuleLoader__.load({
                     setSliderIndex(null);
                     applyEffort(undefined);
                   }
-                }, `恢复模型默认${reasoning?.defaultEffort ? `（${reasoning.defaultEffort}）` : ""}`)
+                }, "恢复模型默认" + (reasoning && reasoning.defaultEffort ? "（" + reasoning.defaultEffort + "）" : ""))
               )
             : h("div", { className: "dsh-mbp-param-hint" }, "当前跟随模型默认值")
         );

@@ -20,7 +20,7 @@ Clicking the model seat at the right of the composer no longer opens a long flat
 - **① Global search** — type `v3` / `sonnet` / `r1` at the top to fuzzy-match across all providers;
   Enter selects the first hit.
 - **② Grouped by provider** — one card per channel, showing "N models" and an "Enter →" affordance;
-  cards can be dragged to reorder.
+  hold a card to drag it into a new position (one gesture can cross several cards).
 - **③ "Current" badge** — the provider in use gets a highlighted outline and a corner badge.
 - **④ Reasoning effort colour slider** — a draggable Low → Max gradient slider; clicking a tick label
   jumps straight to that level.
@@ -59,9 +59,20 @@ The trigger itself matches the neighbouring screenshot / microphone icons (theme
   `dsh-codex-subscription` / `openai-codex`) get `Speed` (standard / fast / ultrafast) and
   `Output verbosity` (default / concise / balanced / detailed) segmented controls. Each row is shown
   **only when the currently selected model actually supports it**, so no dead switches appear.
-- **Visibility settings panel**: the ⚙ button left of the search box opens a panel where whole providers
-  and individual models can be toggled off; expand a provider to manage its models one by one.
-- **Drag-to-reorder providers**: drag a card to move that provider earlier or later; the order is saved.
+- **Visibility settings panel**: the round ⚙ button left of the search box opens a panel where whole
+  providers and individual models can be toggled off; expanding a provider also exposes a ✎ rename button
+  and lets you drag its model rows into your own order.
+- **Provider renaming (aliases)**: hit ✎ on a provider row and type any name (for example, turn
+  "ChatGPT subscription" into "ChatGPT sub"). The name is written into the **host model registry**, so the
+  grouped panel, the drill-down list and the stock `/model` popover all show it — not just this plugin. It
+  persists in `aliases.json` under the DSH state directory and is replayed whenever the registry
+  re-registers its adapters and shortly after startup; the panel's top bar offers 同步到全部界面 (re-apply
+  now) and 恢复默认 (drop the alias).
+- **Drag reordering (providers and models)**: hold a card and drag — it can cross several cards in one
+  gesture, the drop position is where it lands, and the cards in between shift over (dropping onto the
+  neighbouring card is a plain swap). Inside an expanded provider in the settings panel, model rows drag
+  the same way and their order is stored per provider. A 6 px threshold separates a drag from a tap, and
+  a 260 ms post-drop cooldown keeps the release from also drilling down.
 - **Preference persistence**: order, hidden providers and hidden models live in `localStorage`
   (`dsh-model-block-picker.prefs.v1`) and stale ids are pruned automatically.
 - **Theme-aware**: light and dark both use real DSH theme tokens. Accent colour is `--dsw-alias-link`
@@ -140,7 +151,7 @@ token — the same stroke weight as the screenshot plugin
 dsh-model-block-picker/
 ├── package.json          # manifest: dsh.bundle.patch + dsh.client declaration
 ├── cordis.patch.yml      # Loader patch: inserts this package into the profile roster
-├── index.js              # host half (mounts the /diag route)
+├── index.js              # host half (/diag diagnostics + /aliases rename persistence)
 ├── client.js             # browser half: React component + styles + slot registration
 ├── .github/workflows/
 │   └── publish.yml       # push to main → publish npm + tag + GitHub Release
@@ -154,6 +165,9 @@ dsh-model-block-picker/
 ## Diagnostics
 
 - Host log prefix: `[dsh-model-block-picker]` (search your DSH log for it).
+- Aliases: `GET /plugins/dsh-model-block-picker/aliases` returns `{ ready, store, aliases, providers }`
+  where `providers[].base` is the registry name and `name` is what is currently applied; `ready:false`
+  means the model service is not up yet.
 - The browser half reports lifecycle stages to `/plugins/dsh-model-block-picker/diag`:
   `module-evaluated` → `apply-called` → `slot-inject-triggered` → `registered-success`.
   Stopping at `register-error` means a slot/priority conflict; `apply-error` usually means a service was
@@ -173,8 +187,11 @@ dsh-model-block-picker/
 - Speed / output verbosity depend on what the provider exposes: only providers implementing those
   preferences (currently `dsh-codex-subscription`'s `openai-codex`) are recognised; other providers
   simply do not show those rows.
-- Preferences are stored in browser `localStorage`, so they are **per browser profile** and do not sync
-  across machines.
+- Renaming is a **global change to the model registry** (the stock `/model` popover renames too) stored in
+  `state/dsh-model-block-picker/aliases.json` under the DSH home — not the browser profile — and it stops
+  being replayed once the plugin is uninstalled.
+- Preferences (order, hidden items) are stored in browser `localStorage`, so they are **per browser profile**
+  and do not sync across machines.
 
 ## Releasing
 

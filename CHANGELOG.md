@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-10-26
+
+### Added
+
+- **Provider renaming (aliases)**: every row of the 显示设置 panel gained a ✎ button. The name you type is
+  written into the host model registry through `/plugins/dsh-model-block-picker/aliases`, so it is what the
+  grouped panel, the drill-down list **and** the stock `/model` popover display — not a plugin-local string
+  table that only this popover would honour. Aliases persist in `aliases.json` inside the DSH state
+  directory and are replayed on every `adapters-updated` event and shortly after startup, because provider
+  entries are rebuilt each time the registry re-registers its adapters. The panel's top bar reports host
+  readiness and offers 同步到全部界面 (re-apply now) and 恢复默认 (drop the alias, restore the registry name).
+- **Model-level drag reorder**: inside an expanded provider in the settings panel, drag a model row to
+  reorder that provider's models — across as many rows as you like. The order is stored per provider and
+  drives the popover list, the search results and the drill-down alike.
+
+### Changed
+
+- **Provider dragging rewritten on pointer events** (the previous implementation was HTML5 drag and drop,
+  where a drop only ever lands on the card under the cursor, so a card advanced one slot per drag). A card
+  now follows the pointer and can cross several cards in one gesture; the drop position *is* the new
+  position and the cards in between shift over. A 6 px threshold keeps taps distinct from drags, and a
+  260 ms post-drop cooldown stops a drag from being read as a drill-down click.
+- **Reasoning slider visual pass**: the track is 16 px with a soft aura under the filled part, each stop
+  carries its own hue that tints the active tick label and the value pill, twinkling sparks appear over the
+  fill while dragging, and the value pill shows a small glowing dot. The settings trigger is now a round
+  icon button, and cards / model rows expose a grip affordance.
+- **Preference schema**: `modelOrder` (per-provider model order) joined `order`, `hiddenProviders` and
+  `hiddenModels` in `dsh-model-block-picker.prefs.v1`; existing payloads keep working unchanged.
+
+### Fixed
+
+- The "restore everything" action at the foot of the settings panel appeared only after some model had
+  been hidden. It now also appears once an order (providers or models) has been customised.
+
 ## [1.1.0] - 2026-10-18
 
 ### Added

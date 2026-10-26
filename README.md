@@ -15,7 +15,7 @@ DeepSeek Harness (DSH) 插件 —— **按模型来源分块**的输入框模型
 ![分块面板与搜索、推理强度、速度与输出详略](docs/screenshot-panel.png)
 
 - **① 全局搜索** —— 直接在顶部输入 `v3` / `sonnet` / `r1`，跨全部来源聚合匹配；回车选中首项。
-- **② 按来源分块** —— 每个渠道一张卡片，标出「N 个模型」与「进入 →」；卡片可拖动排序。
+- **② 按来源分块** —— 每个渠道一张卡片，标出「N 个模型」与「进入 →」；按住卡片可拖动排序（一次可跨多张）。
 - **③「当前」标记** —— 正在使用的来源高亮描边 + 右上角蓝标。
 - **④ 推理强度彩色滑条** —— 可拖动的 Low → Max 渐变滑条，点击刻度文字可直达。
 - **⑤ 速度 / 输出详略** —— 当前模型支持时才出现，不支持则整行隐藏。
@@ -41,8 +41,9 @@ DeepSeek Harness (DSH) 插件 —— **按模型来源分块**的输入框模型
 - **全局搜索**：直接输入 `v3` / `sonnet` / `r1` 等关键词即可跨所有来源聚合匹配，回车选中首项；清空即回到分块视图。
 - **推理强度（彩色滑条）**：当前模型支持 reasoning 时，浮层底部出现一条**可拖动的渐变色滑条**（Low → Max 分档，带发光 thumb），点击刻度文字也能直接跳档；右侧显示当前档位，`恢复模型默认` 一键回到提供方推荐值。
 - **速度 / 输出详略自适应**：订阅类提供方（如 ChatGPT 订阅）的模型若支持 `speedMode` / `outputVerbosity`，浮层底部会**额外出现对应的分段控件**；不支持的模型或提供方这两项**自动隐藏**，不会出现死开关。
-- **显示设置面板**：搜索框左侧的 ⚙ 按钮打开设置，可**按提供方整体开关**、也可**展开逐个开关单个模型**是否出现在选择器里；顶部显示已隐藏数量，底部可一键恢复全部。
-- **提供方拖拽排序**：卡片可直接拖动调整先后顺序（拖动时卡片半透明、目标位显示描边），松手即保存。
+- **显示设置面板**：搜索框左侧的圆形 ⚙ 按钮打开设置，可**按提供方整体开关**、也可**展开逐个开关单个模型**是否出现在选择器里；展开后每行还有 ✎ 改名入口，模型行可直接拖动排序；顶部显示已隐藏数量，底部一键恢复全部显示与默认顺序。
+- **来源重命名**：点 ✎ 输入新名字即可把来源改成任意说法（例如把「ChatGPT subscription」写成「ChatGPT 订阅」）。名称**写进模型注册表**，所以分组面板、下钻列表和官方 `/model` 弹窗同时改名；保存在 DSH 状态目录的 `aliases.json`，适配器重新注册或下次启动后自动重放，设置面板顶部可手动「同步到全部界面」或「恢复默认」。
+- **拖拽排序（来源与模型）**：按住卡片拖动即可改变来源先后，**一次能跨过好几张卡片**，落点就是最终位置、中间卡片整体顺移（拖到相邻卡片上即两者互换）；显示设置里展开来源后，模型行同样可拖、可跨多行，顺序按来源分别保存。拖动中卡片/行半透明，松手 260ms 内忽略点击，避免误进下钻。
 - **偏好持久化**：顺序、隐藏来源、隐藏模型全部写入 `localStorage`（key `dsh-model-block-picker.prefs.v1`），刷新与重启后保持；不存在的来源会在下次自动清理。
 - **主题自适应**：浅色、深色均用 DSH 主题 token，深色下强调色使用 `--dsw-alias-link`（`#7aaaff`）而非会反转成近白的 `--dsw-alias-brand-primary`。
 
@@ -112,7 +113,7 @@ directory.select({ provider, model, reasoningEffort })  // 提交选择
 dsh-model-block-picker/
 ├── package.json          # 清单：dsh.bundle.patch + dsh.client 声明
 ├── cordis.patch.yml      # Loader patch：把本包插进 profile 名单
-├── index.js              # 宿主半边（挂 /diag 诊断路由）
+├── index.js              # 宿主半边（/diag 诊断 + /aliases 改名持久化）
 ├── client.js             # 浏览器半边：React 组件 + 样式 + 插槽注册
 ├── .github/workflows/
 │   └── publish.yml       # 推 main 即发布 npm + 打 tag + 建 Release
@@ -128,6 +129,8 @@ dsh-model-block-picker/
 排障时会用到：
 
 - 宿主侧日志前缀 `[dsh-model-block-picker]`（DSH 日志里搜这个）。
+- 来源改名：`GET /plugins/dsh-model-block-picker/aliases` 返回 `{ ready, store, aliases, providers }`，其中
+  `providers[].base` 是注册表原名、`name` 是当前生效名，`ready:false` 说明模型服务还没起来。
 - 浏览器端各生命周期节点会打到 `/plugins/dsh-model-block-picker/diag`：
   `module-evaluated` → `apply-called` → `slot-inject-triggered` → `registered-success`。
   若停在 `register-error`，说明槽位/优先级冲突；停在 `apply-error` 多半是 `inject` 未声明就访问了服务。
@@ -141,7 +144,9 @@ dsh-model-block-picker/
 - 已寻址的 subagent 会话不提供模型选择（沿用官方约定）。
 - 来源分组顺序：默认 DeepSeek 账号 → DeepSeek 官方 → 其余按名称排；**可直接在面板里拖动卡片自定义顺序**，保存于 `localStorage`。
 - 速度 / 输出详略依赖提供方暴露能力：目前只有实现了 `speedMode` / `outputVerbosity` 偏好的提供方（如 `dsh-codex-subscription` 的 `openai-codex`）会被识别；其他提供方这两项不显示。
-- 偏好保存在浏览器 `localStorage`，因此**按浏览器 profile 隔离**，不随 DSH 账号同步。
+- 来源改名是**写进模型注册表的全局改动**（官方 `/model` 弹窗等界面一并改名），保存在 DSH 状态目录
+  `state/dsh-model-block-picker/aliases.json`，**跟随 DSH home 而不是浏览器 profile**；卸载插件后不再重放。
+- 偏好（顺序、隐藏项）保存在浏览器 `localStorage`，因此**按浏览器 profile 隔离**，不随 DSH 账号同步。
 
 ## 发布流程
 
