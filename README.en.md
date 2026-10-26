@@ -156,10 +156,6 @@ dsh-model-block-picker/
 ├── cordis.patch.yml      # Loader patch: inserts this package into the profile roster
 ├── index.js              # host half (/diag diagnostics + /aliases rename persistence)
 ├── client.js             # browser half: React component + styles + slot registration
-├── .github/workflows/
-│   └── publish.yml       # push to main → publish npm + tag + GitHub Release
-├── scripts/
-│   └── release-notes.mjs # extracts the current version's section from CHANGELOG
 ├── CHANGELOG.md
 ├── LICENSE
 └── README.md
@@ -195,63 +191,6 @@ dsh-model-block-picker/
   being replayed once the plugin is uninstalled.
 - Preferences (order, hidden items) are stored in browser `localStorage`, so they are **per browser profile**
   and do not sync across machines.
-
-## Releasing
-
-A release is one step: **push to `main`**.
-
-```bash
-# 1. change the code
-# 2. bump "version" in package.json
-# 3. add a `## [x.y.z]` section to CHANGELOG.md
-git push                     # ← this is the only step that triggers a release
-```
-
-`publish.yml` then validates the version, checks npm does not already have it, runs `npm publish` (with provenance), creates the `vX.Y.Z` tag, and opens a GitHub Release from the matching CHANGELOG section.
-
-### The one manual step, done once
-
-npm has to trust this repository first; the trust is permanent afterwards.
-
-**Prerequisite: the npm account must already have 2FA enabled.** Without it the registry refuses to read or write trusted publishers outright (`403 Please enable 2fa for your account`), and that error only shows up when you try to configure it — nothing warns you beforehand. Either a security key (passkey / Windows Hello) or an authenticator app works; the level must be `auth-and-writes`.
-
-**Option 1: the CLI**
-
-```bash
-npm trust github dsh-model-block-picker \
-  --file publish.yml \
-  --repo liu19666/dsh-model-block-picker \
-  --allow-publish
-```
-
-This is an account-level write, so it asks for a one-time password: the terminal prints a `https://www.npmjs.com/auth/cli/<id>` link (npm 11.19 masks the id as `***`; if you cannot see it, use the web option below) which you complete in a browser with your 2FA.
-
-**Option 2: the web UI**
-
-1. Open <https://www.npmjs.com/package/dsh-model-block-picker/settings> and find **Trusted Publisher**.
-2. Pick **GitHub Actions** and fill in three fields (case-sensitive, no path in the workflow name):
-
-   | Field | Value |
-   | --- | --- |
-   | Organization or user | `liu19666` |
-   | Repository | `dsh-model-block-picker` |
-   | Workflow filename | `publish.yml` |
-
-3. **Tick direct publishing under Allowed actions.** Trusted publishers created after 2026-09-03 default to `npm stage publish` only — that drops the package into a review queue that needs a human 2FA approval. This repository wants unattended direct publishing, so `npm publish` has to be enabled too. Miss it and the workflow fails with `403`, and npm does **not** validate these fields when saving, so the error only appears at publish time.
-4. Leave Environment name empty — the workflow declares no `environment`, and a value here would not match.
-
-### What the workflow refuses to get wrong
-
-- **No version in the workflow.** `package.json` is the single source of truth; the CHANGELOG section only supplies the Release body, and a missing section degrades to GitHub's generated notes instead of failing.
-- **Idempotent.** Every job first checks whether its artifact exists: a version already on npm skips publishing, an existing tag skips the Release. Re-running a failed job, or pushing again without a version bump, publishes nothing and creates no duplicate tag — no "version claimed but tag missing" half-states.
-- **No secret.** Authentication is GitHub OIDC: npm verifies a short-lived token minted for this repository, branch and workflow file. There is no `NPM_TOKEN` to leak, rotate, or replay from someone else's machine.
-- **Nothing irreversible before preflight passes.** An npm version, once published, is claimed forever — so the version format and the "is this already on npm" check both run in `preflight`, before `publish` starts.
-- **Prereleases never take over `latest`.** `1.2.0-beta.1` publishes under the `beta` dist-tag and the Release is marked prerelease; otherwise `npm install dsh-model-block-picker` would hand a stranger a beta.
-- **No credentials in `.npmrc`.** With `registry-url`, `actions/setup-node` writes `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` into `.npmrc`. Trusted publishing deliberately leaves that variable unset, so the placeholder expands to an empty string — and npm then believes credentials *are* configured, skips the OIDC exchange, and fails with `ENEEDAUTH` ([npm/documentation#1960](https://github.com/npm/documentation/issues/1960)). This workflow therefore passes **no** `registry-url` (npm already defaults to the public registry) and asserts before publishing that `.npmrc` holds no `_authToken`, so a failure names the real cause.
-
-### Releasing without a GitHub Release
-
-Run `workflow_dispatch` by hand, or publish with `gh release create` yourself — the workflow reads the version from `package.json` and does not care who pushed it.
 
 ## License
 

@@ -117,10 +117,6 @@ dsh-model-block-picker/
 ├── cordis.patch.yml      # Loader patch：把本包插进 profile 名单
 ├── index.js              # 宿主半边（/diag 诊断 + /aliases 改名持久化）
 ├── client.js             # 浏览器半边：React 组件 + 样式 + 插槽注册
-├── .github/workflows/
-│   └── publish.yml       # 推 main 即发布 npm + 打 tag + 建 Release
-├── scripts/
-│   └── release-notes.mjs # 从 CHANGELOG 抽取当前版本的 Release 正文
 ├── CHANGELOG.md
 ├── LICENSE
 └── README.md
@@ -149,63 +145,6 @@ dsh-model-block-picker/
 - 来源改名是**写进模型注册表的全局改动**（官方 `/model` 弹窗等界面一并改名），保存在 DSH 状态目录
   `state/dsh-model-block-picker/aliases.json`，**跟随 DSH home 而不是浏览器 profile**；卸载插件后不再重放。
 - 偏好（顺序、隐藏项）保存在浏览器 `localStorage`，因此**按浏览器 profile 隔离**，不随 DSH 账号同步。
-
-## 发布流程
-
-发版只有一步：**push 到 `main`**。
-
-```bash
-# 1. 改代码
-# 2. 改 package.json 的 version
-# 3. 在 CHANGELOG.md 加一个 ## [x.y.z] 段落
-git push                     # ← 只有这一步会触发发布
-```
-
-`publish.yml` 随后依次完成：校验版本号 → 确认 npm 上还没有这个版本 → `npm publish`（带 provenance）→ 打 `vX.Y.Z` tag → 用 CHANGELOG 对应段落建 GitHub Release。
-
-### 只有第一次需要手动配置
-
-npm 那边要认这个仓库，得先建一次「信任关系」（之后永久有效）。
-
-**前置条件：npm 账号必须已开启 2FA。** 未开启时 registry 直接拒绝可信发布器的读写（`403 Please enable 2fa for your account`），而且这个报错只在你尝试配置时出现，不会提前提示。2FA 用安全密钥（passkey / Windows Hello）或验证器 App 都行，等级选 `auth-and-writes`。
-
-**方式一：命令行**
-
-```bash
-npm trust github dsh-model-block-picker \
-  --file publish.yml \
-  --repo liu19666/dsh-model-block-picker \
-  --allow-publish
-```
-
-这是账号级写操作，会要求一次性口令：终端会打印一个 `https://www.npmjs.com/auth/cli/<id>` 链接（npm 11.19 起把链接里的 id 打码成了 `***`，看不到就改用下面的网页方式），在浏览器里用你的 2FA 完成验证即可。
-
-**方式二：网页**
-
-1. 打开 <https://www.npmjs.com/package/dsh-model-block-picker/settings>，找到 **Trusted Publisher**。
-2. 选 **GitHub Actions**，填三项（区分大小写，仓库和文件名都不能带路径）：
-
-   | 字段 | 值 |
-   | --- | --- |
-   | Organization or user | `liu19666` |
-   | Repository | `dsh-model-block-picker` |
-   | Workflow filename | `publish.yml` |
-
-3. **Allowed actions 里勾上直接发布。** 2026-09-03 起新建的可信发布器默认只允许 `npm stage publish`（把包丢进待审队列，需要人手动 2FA 批准）。本仓库要的是无人值守直接发布，必须额外勾选 `npm publish`。漏了这一步，工作流会以 `403` 失败，而 npm 保存配置时**不会**校验这些字段，错误只会在发布那一刻才出现。
-4. Environment name 留空——工作流没有声明 `environment`，填了反而对不上。
-
-### 它不会踩的几个坑
-
-- **不写死版本号。** 版本号的唯一来源是 `package.json`；`CHANGELOG` 段落只决定 Release 正文，漏写不会导致失败（会退回 GitHub 自动生成的 notes）。
-- **幂等。** 每个 job 都先检查自己的产物是否已存在：版本已在 npm 上就跳过发布，tag 已存在就跳过 Release。所以重跑失败的任务、或者忘了改版本号又推一次，都不会重复发布，也不会有「版本号被占了但 tag 没打」这种半成品状态。
-- **不需要任何 secret。** 认证走 GitHub OIDC：npm 验证的是「这个仓库、这个分支、这个工作流文件」签出的短期令牌，没有 `NPM_TOKEN` 可泄露，也无法从别人机器上重放。
-- **发布前不做任何不可逆的事。** npm 版本号一旦发布就永久占用，所以版本格式、npm 是否已有该版本这些检查全在 `preflight` job 里跑完，`publish` 才会启动。
-- **预发布版本不会顶掉 `latest`。** `1.2.0-beta.1` 会以 `beta` 这个 dist-tag 发布，Release 也标成 prerelease —— 否则 `npm install dsh-model-block-picker` 会给陌生人装上一个 beta。
-- **`.npmrc` 里不留凭据。** `actions/setup-node` 一旦带 `registry-url`，就会往 `.npmrc` 写 `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`；可信发布场景下这个变量是故意不设的，展开成空串后 npm 会误以为「凭据已配置」，直接跳过 OIDC 交换并报 `ENEEDAUTH`（[npm/documentation#1960](https://github.com/npm/documentation/issues/1960)）。本工作流因此**不传** `registry-url`（npm 本来就默认官方源），并在发布前断言 `.npmrc` 里没有 `_authToken`，让失败指向真正的原因。
-
-### 只想发一次 npm、不想建 Release
-
-手动跑一次 `workflow_dispatch` 也行；或者反过来，用 `gh release create` 手工发版——工作流只认 `package.json` 的版本号，不关心是谁推的。
 
 ## 许可
 
