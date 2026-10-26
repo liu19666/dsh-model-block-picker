@@ -32,8 +32,9 @@ white-on-white text:
 
 ![Grouped panel in dark mode](docs/screenshot-dark.png)
 
-The ⚙ button left of the search box opens **display settings**, where whole providers and individual
-models can be toggled:
+The ⚙ button left of the search box opens **display settings**: toggle whole providers or individual
+models, rename a provider with the row's ✎, drag model rows to reorder them, and push the names into the
+model registry with **sync everywhere**:
 
 ![Display settings panel](docs/screenshot-settings.png)
 
