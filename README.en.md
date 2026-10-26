@@ -27,6 +27,8 @@ Clicking the model seat at the right of the composer no longer opens a long flat
 - **⑤ Speed / output verbosity** — shown only when the selected model supports them; the whole row is
   hidden otherwise.
 
+> Provider names in the screenshots are pixelated.
+
 Dark mode uses the same theme tokens with `--dsw-alias-link` (`#7aaaff`) as the accent, so no more
 white-on-white text:
 
